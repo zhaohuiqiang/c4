@@ -177,6 +177,7 @@ void next()
   }
 }
 
+//表达式分析
 void expr(int lev)
 {
   int t, *d;
@@ -327,6 +328,7 @@ void expr(int lev)
   }
 }
 
+//分析函数中除了声明之外的部分,语法分析
 void stmt()
 {
   int *a, *b;
@@ -336,33 +338,36 @@ void stmt()
     if (tk == '(') next(); else { printf("%d: open paren expected\n", line); exit(-1); }
     expr(Assign);
     if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
-    *++e = BZ; b = ++e;
-    stmt();
+    *++e = BZ; //branch if zero
+    b = ++e;//branch address pointer
+    stmt(); // 继续分析
     if (tk == Else) {
-      *b = (int)(e + 3); *++e = JMP; b = ++e;
+      *b = (int)(e + 3); // e + 3 位置是else 起始位置
+      *++e = JMP; // if 语句 else 之前插入 JMP 跳过Else 部分
+      b = ++e; // JMP目标
       next();
-      stmt();
+      stmt();//分析else 部分
     }
-    *b = (int)(e + 1);
+    *b = (int)(e + 1);//if 语句结束,无论是if BZ 跳转目标还是 else 之前的JMP的跳转目标
   }
-  else if (tk == While) {
+  else if (tk == While) {//循环
     next();
-    a = e + 1;
+    a = e + 1; // While 循环体起始地址
     if (tk == '(') next(); else { printf("%d: open paren expected\n", line); exit(-1); }
     expr(Assign);
     if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
-    *++e = BZ; b = ++e;
-    stmt();
-    *++e = JMP; *++e = (int)a;
-    *b = (int)(e + 1);
+    *++e = BZ; b = ++e;//b = While 语句结束后地址
+    stmt();//处理While 语句体
+    *++e = JMP; *++e = (int)a;//无条件跳转到While语句开始(包括循环条件的代码),实现循环
+    *b = (int)(e + 1);//BZ跳转目标(循环结束)
   }
   else if (tk == Return) {
     next();
-    if (tk != ';') expr(Assign);
+    if (tk != ';') expr(Assign);//计算返回值
     *++e = LEV;
-    if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }
+    if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }//What's this?
   }
-  else if (tk == '{') {
+  else if (tk == '{') {//复合语句
     next();
     while (tk != '}') stmt();
     next();
@@ -371,7 +376,7 @@ void stmt()
     next();
   }
   else {
-    expr(Assign);
+    expr(Assign);//一般的语句认为是赋值语句/表达式
     if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }
   }
 }
@@ -511,7 +516,7 @@ int main(int argc, char **argv)
       }
       else {
         id[Class] = Glo;//全局变量
-        id[Val] = (int)data;//Val 存储变量在data段的指针,处理访问全局变量的情况?//WTF
+        id[Val] = (int)data;//给全局变量在data段分配内存
         data = data + sizeof(int);
       }
       if (tk == ',') next();
