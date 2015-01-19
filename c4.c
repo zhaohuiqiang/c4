@@ -26,6 +26,36 @@ int *e, *le,  // current position in emitted code
     debug;    // print executed instructions
 
 // tokens and classes (operators last and in precedence order)
+/*
+
+Id = identifier 用户定义的identifier
+
+//运算符
+Assign  =
+Cond    ?
+Lor     ||
+Lan     &&
+Or      |
+Xor     ^
+And     &
+Eq      ==
+Ne      !=
+Lt      <
+Gt      >
+Le      <=
+Ge      >=
+Shl     <<
+Shr     >>
+Add     +
+Sub     -
+Mul     *
+Div     /
+Mod     %
+Inc     ++
+Dec     --
+Brak    [
+*/
+
 enum {
   Num = 128, Fun, Sys, Glo, Loc, Id,
   Char, Else, Enum, If, Int, Return, Sizeof, While,
@@ -41,6 +71,9 @@ enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,
 enum { CHAR, INT, PTR };
 
 // identifier offsets (since we can't create an ident struct)
+//因为作者没有实现结构体,所以[id]指向的空间被分割为Idsz大小的块(模拟结构体)
+//当id指向块首时,id[0] == id[Tk] 访问的就是Tk成员的数据(一般是指针)
+//Name 指向的是这个identifier的Name
 enum { Tk, Hash, Name, Class, Type, Val, HClass, HType, HVal, Idsz };
 
 void next()
@@ -50,82 +83,87 @@ void next()
   while (tk = *p) {
     ++p;
     if (tk == '\n') {
-      if (src) {
+      if (src) { //命令行指明-s参数,输出源代码和对应字节码
         printf("%d: %.*s", line, p - lp, lp);
         lp = p;
         while (le < e) {
           printf("%8.4s", &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
                            "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
                            "OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT,"[*++le * 5]);
-          if (*le <= ADJ) printf(" %d\n", *++le); else printf("\n");
+          if (*le <= ADJ) printf(" %d\n", *++le); else printf("\n"); //ADJ之前的指令均有操作数
         }
       }
       ++line;
     }
-    else if (tk == '#') {
+    else if (tk == '#') {//#作为单行注释符号,处理#include等情况
       while (*p != 0 && *p != '\n') ++p;
     }
     else if ((tk >= 'a' && tk <= 'z') || (tk >= 'A' && tk <= 'Z') || tk == '_') {
-      pp = p - 1;
+      pp = p - 1; //因为有++p,pp回退一个字符,pp指向 [这个符号] 的首字母
       while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_')
-        tk = tk * 147 + *p++;
-      tk = (tk << 6) + (p - pp);
+        tk = tk * 147 + *p++;//计算哈希值,tk起始时已经等于*p,从p开始正确
+      tk = (tk << 6) + (p - pp); //哈希值加上[符号长度]
       id = sym;
       while (id[Tk]) {
-        if (tk == id[Hash] && !memcmp((char *)id[Name], pp, p - pp)) { tk = id[Tk]; return; }
-        id = id + Idsz;
+        if (tk == id[Hash] && !memcmp((char *)id[Name], pp, p - pp)) {
+          //找到同名,则tk = id[Tk] (将id看做结构体,访问其Tk成员,解释见上)
+          tk = id[Tk];
+          return;
+        }
+        id = id + Idsz;//继续循环identifier表
       }
+      //找不到,发现新identifier
       id[Name] = (int)pp;
-      id[Hash] = tk;
-      tk = id[Tk] = Id;
+      id[Hash] = tk;//哈希值
+      tk = id[Tk] = Id; //token 类型为identifier
       return;
     }
-    else if (tk >= '0' && tk <= '9') {
-      if (ival = tk - '0') { while (*p >= '0' && *p <= '9') ival = ival * 10 + *p++ - '0'; }
-      else if (*p == 'x' || *p == 'X') {
+    else if (tk >= '0' && tk <= '9') {// 第一位为数字,认为是数值
+      if (ival = tk - '0') { while (*p >= '0' && *p <= '9') ival = ival * 10 + *p++ - '0'; }//第一位不为0,认为是十进制数
+      else if (*p == 'x' || *p == 'X') {//第一位为0,且以x开头,认为是16进制数
         while ((tk = *++p) && ((tk >= '0' && tk <= '9') || (tk >= 'a' && tk <= 'f') || (tk >= 'A' && tk <= 'F')))
           ival = ival * 16 + (tk & 15) + (tk >= 'A' ? 9 : 0);
       }
-      else { while (*p >= '0' && *p <= '7') ival = ival * 8 + *p++ - '0'; }
-      tk = Num;
+      else { while (*p >= '0' && *p <= '7') ival = ival * 8 + *p++ - '0'; }//认为是八进制数
+      tk = Num;//token 为数值型,返回
       return;
     }
     else if (tk == '/') {
-      if (*p == '/') {
+      if (*p == '/') {//两个'/'开头,单行注释
         ++p;
         while (*p != 0 && *p != '\n') ++p;
       }
       else {
-        tk = Div;
+        tk = Div; //除法
         return;
       }
     }
-    else if (tk == '\'' || tk == '"') {
+    else if (tk == '\'' || tk == '"') {//引号开头,认为是字符(串)
       pp = data;
-      while (*p != 0 && *p != tk) {
+      while (*p != 0 && *p != tk) {//直到找到匹配的引号为止;p == 0 是什么情况没看懂;
         if ((ival = *p++) == '\\') {
-          if ((ival = *p++) == 'n') ival = '\n';
+          if ((ival = *p++) == 'n') ival = '\n';// '\n' 认为是'\n' 其他直接忽略'\'转义
         }
-        if (tk == '"') *data++ = ival;
+        if (tk == '"') *data++ = ival;//如果是双引号,认为是字符串,向data拷贝字符
       }
       ++p;
-      if (tk == '"') ival = (int)pp; else tk = Num;
+      if (tk == '"') ival = (int)pp; else tk = Num;//双引号指向data中字符串开始,单引号则认为是数字
       return;
     }
-    else if (tk == '=') { if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return; }
-    else if (tk == '+') { if (*p == '+') { ++p; tk = Inc; } else tk = Add; return; }
-    else if (tk == '-') { if (*p == '-') { ++p; tk = Dec; } else tk = Sub; return; }
-    else if (tk == '!') { if (*p == '=') { ++p; tk = Ne; } return; }
-    else if (tk == '<') { if (*p == '=') { ++p; tk = Le; } else if (*p == '<') { ++p; tk = Shl; } else tk = Lt; return; }
-    else if (tk == '>') { if (*p == '=') { ++p; tk = Ge; } else if (*p == '>') { ++p; tk = Shr; } else tk = Gt; return; }
-    else if (tk == '|') { if (*p == '|') { ++p; tk = Lor; } else tk = Or; return; }
+    else if (tk == '=') { if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return; }//等于,赋值
+    else if (tk == '+') { if (*p == '+') { ++p; tk = Inc; } else tk = Add; return; }//加,自增
+    else if (tk == '-') { if (*p == '-') { ++p; tk = Dec; } else tk = Sub; return; }//减,自减
+    else if (tk == '!') { if (*p == '=') { ++p; tk = Ne; } return; }//不等于
+    else if (tk == '<') { if (*p == '=') { ++p; tk = Le; } else if (*p == '<') { ++p; tk = Shl; } else tk = Lt; return; }// <,<=, <<
+    else if (tk == '>') { if (*p == '=') { ++p; tk = Ge; } else if (*p == '>') { ++p; tk = Shr; } else tk = Gt; return; }//>,>= >>
+    else if (tk == '|') { if (*p == '|') { ++p; tk = Lor; } else tk = Or; return; }//逻辑或,或
     else if (tk == '&') { if (*p == '&') { ++p; tk = Lan; } else tk = And; return; }
     else if (tk == '^') { tk = Xor; return; }
     else if (tk == '%') { tk = Mod; return; }
     else if (tk == '*') { tk = Mul; return; }
     else if (tk == '[') { tk = Brak; return; }
     else if (tk == '?') { tk = Cond; return; }
-    else if (tk == '~' || tk == ';' || tk == '{' || tk == '}' || tk == '(' || tk == ')' || tk == ']' || tk == ',' || tk == ':') return;
+    else if (tk == '~' || tk == ';' || tk == '{' || tk == '}' || tk == '(' || tk == ')' || tk == ']' || tk == ',' || tk == ':') return;//不做处理
   }
 }
 
