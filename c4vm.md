@@ -11,7 +11,7 @@ int *pc, *sp, *bp, a, cycle;
 
 #指令集
 
-1. LEA 以[PC+1]地址,以bp为基址,基址寻址载入累加器a
+1. LEA 去局部变量地址,以[PC+1]地址,以bp为基址,**地址**载入累加器a
 2. IMM [PC+1]作为为立即数载入累加器a
 3. JMP 无条件跳转到[PC+1]
 4. JSR 进入子程序,将PC+2入栈作为返回地址,跳转到[PC+1]
@@ -22,8 +22,8 @@ int *pc, *sp, *bp, a, cycle;
 9. LEV 离开子程序,堆栈指针sp = bp,从堆栈中弹出基址bp,pc
 10. LI 以a为地址取int数
 11. LC 以a为地址取char
-12. SI 以栈顶为地址存int数并弹栈
-13. SC 以栈顶为地址存char并弹栈
+12. SI 以栈顶为地址存int数并弹栈[[sp++]]=a
+13. SC 以栈顶为地址存char并弹栈[[sp++]]=a
 14. PSH 将a压栈
 15. OR a = [sp++] | a
 16. XOR a = [sp++] ^ a

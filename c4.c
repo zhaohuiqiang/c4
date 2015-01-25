@@ -157,7 +157,7 @@ void next()
         if (tk == '"') *data++ = ival;//如果是双引号,认为是字符串,向data拷贝字符
       }
       ++p;
-      if (tk == '"') ival = (int)pp; else tk = Num;//双引号指向data中字符串开始,单引号则认为是数字
+      if (tk == '"') ival = (int)pp; else tk = Num;//双引号则ival指向data中字符串开始,单引号则认为是数字
       return;
     }
     else if (tk == '=') { if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return; }//等于,赋值
@@ -176,100 +176,108 @@ void next()
     else if (tk == '~' || tk == ';' || tk == '{' || tk == '}' || tk == '(' || tk == ')' || tk == ']' || tk == ',' || tk == ':') return;//不做处理
   }
 }
-
 //表达式分析
+//lev表示运算符,因为各个运算符token是按照优先级生序排列的,所以lev大表示优先级高
 void expr(int lev)
 {
   int t, *d;
 
   if (!tk) { printf("%d: unexpected eof in expression\n", line); exit(-1); }
-  else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT; }
-  else if (tk == '"') {
+  else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT; } //直接取立即数作为表达式值
+  else if (tk == '"') { //字符串
     *++e = IMM; *++e = ival; next();
-    while (tk == '"') next();
-    data = (char *)((int)data + sizeof(int) & -sizeof(int)); ty = PTR;
+    while (tk == '"') next();//连续的'"' 处理C风格多行文本 比如["abc" "def"]
+    data = (char *)((int)data + sizeof(int) & -sizeof(int));//字节对齐到int
+    ty = PTR;
   }
   else if (tk == Sizeof) {
     next(); if (tk == '(') next(); else { printf("%d: open paren expected in sizeof\n", line); exit(-1); }
     ty = INT; if (tk == Int) next(); else if (tk == Char) { next(); ty = CHAR; }
-    while (tk == Mul) { next(); ty = ty + PTR; }
+    while (tk == Mul) { next(); ty = ty + PTR; }//多级指针,每多一级加PTR
     if (tk == ')') next(); else { printf("%d: close paren expected in sizeof\n", line); exit(-1); }
-    *++e = IMM; *++e = (ty == CHAR) ? sizeof(char) : sizeof(int);
+    *++e = IMM; *++e = (ty == CHAR) ? sizeof(char) : sizeof(int);//除了char是一字节,int和多级指针都是int大小
     ty = INT;
   }
-  else if (tk == Id) {
+  else if (tk == Id) {//identifier
     d = id; next();
-    if (tk == '(') {
+    if (tk == '(') {//函数
       next();
-      t = 0;
-      while (tk != ')') { expr(Assign); *++e = PSH; ++t; if (tk == ',') next(); }
+      t = 0;//形参个数
+      while (tk != ')') { expr(Assign); *++e = PSH; ++t; if (tk == ',') next(); }//计算实参的值，压栈(传参)
       next();
-      if (d[Class] == Sys) *++e = d[Val];
-      else if (d[Class] == Fun) { *++e = JSR; *++e = d[Val]; }
+      if (d[Class] == Sys) *++e = d[Val]; //系统调用,如malloc,memset,d[val]为opcode
+      else if (d[Class] == Fun) { *++e = JSR; *++e = d[Val]; } //用户定义函数,d[Val]为函数入口地址
       else { printf("%d: bad function call\n", line); exit(-1); }
-      if (t) { *++e = ADJ; *++e = t; }
-      ty = d[Type];
+      if (t) { *++e = ADJ; *++e = t; }//因为用栈传参,调整栈
+      ty = d[Type];//函数返回值类型
     }
-    else if (d[Class] == Num) { *++e = IMM; *++e = d[Val]; ty = INT; }
-    else {
-      if (d[Class] == Loc) { *++e = LEA; *++e = loc - d[Val]; }
-      else if (d[Class] == Glo) { *++e = IMM; *++e = d[Val]; }
+    else if (d[Class] == Num) { *++e = IMM; *++e = d[Val]; ty = INT; }//d[Class] == Num,处理枚举(只有枚举是Class==Num)
+    else {//变量
+      //变量先取地址然后再LC/LI
+      if (d[Class] == Loc) { *++e = LEA; *++e = loc - d[Val]; }//取地址,d[Val]是局部变量偏移量
+      else if (d[Class] == Glo) { *++e = IMM; *++e = d[Val]; }//取地址,d[Val] 是全局变量指针
       else { printf("%d: undefined variable\n", line); exit(-1); }
       *++e = ((ty = d[Type]) == CHAR) ? LC : LI;
     }
   }
   else if (tk == '(') {
     next();
-    if (tk == Int || tk == Char) {
+    if (tk == Int || tk == Char) {//强制类型转换
       t = (tk == Int) ? INT : CHAR; next();
-      while (tk == Mul) { next(); t = t + PTR; }
+      while (tk == Mul) { next(); t = t + PTR; }//指针
       if (tk == ')') next(); else { printf("%d: bad cast\n", line); exit(-1); }
-      expr(Inc);
+      expr(Inc); //高优先级
       ty = t;
     }
-    else {
+    else { //一般语法括号
       expr(Assign);
       if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
     }
   }
-  else if (tk == Mul) {
-    next(); expr(Inc);
+  else if (tk == Mul) {//取指针指向值
+    next(); expr(Inc);//高优先级
     if (ty > INT) ty = ty - PTR; else { printf("%d: bad dereference\n", line); exit(-1); }
     *++e = (ty == CHAR) ? LC : LI;
   }
-  else if (tk == And) {
+  else if (tk == And) {//&,取地址操作
     next(); expr(Inc);
-    if (*e == LC || *e == LI) --e; else { printf("%d: bad address-of\n", line); exit(-1); }
+    if (*e == LC || *e == LI) --e;//根据上面的代码,token为变量时都是先取地址再LI/LC,所以--e就变成了取地址到a
+    else { printf("%d: bad address-of\n", line); exit(-1); }
     ty = ty + PTR;
   }
-  else if (tk == '!') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = 0; *++e = EQ; ty = INT; }
-  else if (tk == '~') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = -1; *++e = XOR; ty = INT; }
+  else if (tk == '!') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = 0; *++e = EQ; ty = INT; }//!x相当于 x==0
+  else if (tk == '~') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = -1; *++e = XOR; ty = INT; }//~x 相当于x ^ -1
   else if (tk == Add) { next(); expr(Inc); ty = INT; }
   else if (tk == Sub) {
     next(); *++e = IMM;
-    if (tk == Num) { *++e = -ival; next(); } else { *++e = -1; *++e = PSH; expr(Inc); *++e = MUL; }
+    if (tk == Num) { *++e = -ival; next(); } //数值,取负
+    else { *++e = -1; *++e = PSH; expr(Inc); *++e = MUL; }//乘-1
     ty = INT;
   }
-  else if (tk == Inc || tk == Dec) {
+  else if (tk == Inc || tk == Dec) {//处理++x,--x//x--,x++在后面处理
     t = tk; next(); expr(Inc);
-    if (*e == LC) { *e = PSH; *++e = LC; }
+    //处理++x,--x
+    if (*e == LC) { *e = PSH; *++e = LC; }//地址压栈(下面SC/SI用到),再取数
     else if (*e == LI) { *e = PSH; *++e = LI; }
     else { printf("%d: bad lvalue in pre-increment\n", line); exit(-1); }
-    *++e = PSH;
-    *++e = IMM; *++e = (ty > PTR) ? sizeof(int) : sizeof(char);
-    *++e = (t == Inc) ? ADD : SUB;
-    *++e = (ty == CHAR) ? SC : SI;
+    *++e = PSH;//将数值压栈
+    *++e = IMM; *++e = (ty > PTR) ? sizeof(int) : sizeof(char);//指针则加减一字,否则加减1
+    *++e = (t == Inc) ? ADD : SUB;//运算
+    *++e = (ty == CHAR) ? SC : SI;//存回变量
   }
   else { printf("%d: bad expression\n", line); exit(-1); }
 
+  //爬山法
+  //tk为ASCII码的都不会超过Num=128
   while (tk >= lev) { // "precedence climbing" or "Top Down Operator Precedence" method
-    t = ty;
-    if (tk == Assign) {
+    t = ty;//ty在递归过程中可能会改变,所以备份当前处理的表达式类型
+    if (tk == Assign) { //赋值
       next();
-      if (*e == LC || *e == LI) *e = PSH; else { printf("%d: bad lvalue in assignment\n", line); exit(-1); }
-      expr(Assign); *++e = ((ty = t) == CHAR) ? SC : SI;
+      if (*e == LC || *e == LI) *e = PSH; //左边被tk=Id中变量部分处理过了,将地址压栈
+      else { printf("%d: bad lvalue in assignment\n", line); exit(-1); }
+      expr(Assign); *++e = ((ty = t) == CHAR) ? SC : SI;//取得右值expr的值,作为a=expr的结果
     }
-    else if (tk == Cond) {
+    else if (tk == Cond) {//x?a:b和if类似,除了不能没有else
       next();
       *++e = BZ; d = ++e;
       expr(Assign);
@@ -278,10 +286,10 @@ void expr(int lev)
       expr(Cond);
       *d = (int)(e + 1);
     }
-    else if (tk == Lor) { next(); *++e = BNZ; d = ++e; expr(Lan); *d = (int)(e + 1); ty = INT; }
-    else if (tk == Lan) { next(); *++e = BZ;  d = ++e; expr(Or);  *d = (int)(e + 1); ty = INT; }
-    else if (tk == Or)  { next(); *++e = PSH; expr(Xor); *++e = OR;  ty = INT; }
-    else if (tk == Xor) { next(); *++e = PSH; expr(And); *++e = XOR; ty = INT; }
+    else if (tk == Lor) { next(); *++e = BNZ; d = ++e; expr(Lan); *d = (int)(e + 1); ty = INT; }//短路,逻辑Or运算符左边为true则表达式为true,不用计算运算符右侧的值
+    else if (tk == Lan) { next(); *++e = BZ;  d = ++e; expr(Or);  *d = (int)(e + 1); ty = INT; }//短路,逻辑And,同上
+    else if (tk == Or)  { next(); *++e = PSH; expr(Xor); *++e = OR;  ty = INT; }//将当前值Push,计算运算符右边值,再与当前值(在栈中)做运算;
+    else if (tk == Xor) { next(); *++e = PSH; expr(And); *++e = XOR; ty = INT; }//expr中lev指明递归函数中最结合性不得低于哪一个运算符
     else if (tk == And) { next(); *++e = PSH; expr(Eq);  *++e = AND; ty = INT; }
     else if (tk == Eq)  { next(); *++e = PSH; expr(Lt);  *++e = EQ;  ty = INT; }
     else if (tk == Ne)  { next(); *++e = PSH; expr(Lt);  *++e = NE;  ty = INT; }
@@ -293,33 +301,34 @@ void expr(int lev)
     else if (tk == Shr) { next(); *++e = PSH; expr(Add); *++e = SHR; ty = INT; }
     else if (tk == Add) {
       next(); *++e = PSH; expr(Mul);
-      if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL;  }
+      if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL;  }//处理指针
       *++e = ADD;
     }
     else if (tk == Sub) {
       next(); *++e = PSH; expr(Mul);
-      if (t > PTR && t == ty) { *++e = SUB; *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = DIV; ty = INT; }
-      else if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL; *++e = SUB; }
+      if (t > PTR && t == ty) { *++e = SUB; *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = DIV; ty = INT; }//指针相减
+      else if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL; *++e = SUB; }//指针减数值
       else *++e = SUB;
     }
     else if (tk == Mul) { next(); *++e = PSH; expr(Inc); *++e = MUL; ty = INT; }
     else if (tk == Div) { next(); *++e = PSH; expr(Inc); *++e = DIV; ty = INT; }
     else if (tk == Mod) { next(); *++e = PSH; expr(Inc); *++e = MOD; ty = INT; }
-    else if (tk == Inc || tk == Dec) {
+    else if (tk == Inc || tk == Dec) {//处理x++,x--
       if (*e == LC) { *e = PSH; *++e = LC; }
       else if (*e == LI) { *e = PSH; *++e = LI; }
       else { printf("%d: bad lvalue in post-increment\n", line); exit(-1); }
       *++e = PSH; *++e = IMM; *++e = (ty > PTR) ? sizeof(int) : sizeof(char);
-      *++e = (tk == Inc) ? ADD : SUB;
-      *++e = (ty == CHAR) ? SC : SI;
+      *++e = (tk == Inc) ? ADD : SUB;//先自增/自减
+      *++e = (ty == CHAR) ? SC : SI;//存到内存里
       *++e = PSH; *++e = IMM; *++e = (ty > PTR) ? sizeof(int) : sizeof(char);
-      *++e = (tk == Inc) ? SUB : ADD;
+      *++e = (tk == Inc) ? SUB : ADD;//再相反操作,保证后自增/自减不影响这次表达式的求值
+      //PS:我终于知道哪些a=1;b=a+++a++为啥等于3了
       next();
     }
-    else if (tk == Brak) {
-      next(); *++e = PSH; expr(Assign);
+    else if (tk == Brak) {//数组下标
+      next(); *++e = PSH; expr(Assign);//保存数组指针, 计算下标
       if (tk == ']') next(); else { printf("%d: close bracket expected\n", line); exit(-1); }
-      if (t > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL;  }
+      if (t > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL;  } //t==PTR时是Char,Char = 0
       else if (t < PTR) { printf("%d: pointer type expected\n", line); exit(-1); }
       *++e = ADD;
       *++e = ((ty = t - PTR) == CHAR) ? LC : LI;
@@ -494,7 +503,7 @@ int main(int argc, char **argv)
             //备份符号信息
             id[HClass] = id[Class]; id[Class] = Loc;
             id[HType]  = id[Type];  id[Type] = ty;
-            id[HVal]   = id[Val];   id[Val] = ++i;
+            id[HVal]   = id[Val];   id[Val] = ++i; //存储变量偏移量
             next();
             if (tk == ',') next();
           }
