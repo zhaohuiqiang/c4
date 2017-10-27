@@ -11,4 +11,8 @@ Try the following:
     
     ./c4 c4.c hello.c
     ./c4 c4.c c4.c hello.c
+    
+    
+    
+ [c4注释](https://github.com/comzyh/c4/blob/comment/c4.c)
 
