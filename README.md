@@ -15,4 +15,6 @@ Try the following:
     
     
  [c4注释](https://github.com/comzyh/c4/blob/comment/c4.c)
+ 
+ [手把手教你构建 C 语言编译器（0）- 前言](http://lotabout.me/2015/write-a-C-interpreter-0/)
 
